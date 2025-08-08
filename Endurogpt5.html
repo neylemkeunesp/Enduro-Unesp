@@ -1,0 +1,1092 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Enduro JS (homenagem)</title>
+<style>
+html, body {
+margin: 0;
+height: 100%;
+background: #000;
+font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+color: #fff;
+overflow: hidden;
+}
+#game {
+position: fixed;
+inset: 0;
+}
+#ui {
+position: fixed;
+left: 0; right: 0; top: 0;
+display: flex;
+gap: 16px;
+align-items: center;
+padding: 10px 14px;
+font-weight: 600;
+text-shadow: 0 1px 3px rgba(0,0,0,.6);
+pointer-events: none;
+}
+#ui .pill {
+padding: 6px 10px;
+border-radius: 999px;
+background: rgba(0,0,0,.35);
+font-variant-numeric: tabular-nums;
+}
+#title {
+position: fixed;
+inset: 0;
+display: grid;
+place-items: center;
+background: radial-gradient(ellipse at center, rgba(0,0,0,.6), rgba(0,0,0,.9));
+text-align: center;
+}
+#title .card {
+max-width: 720px;
+padding: 24px 20px;
+border-radius: 12px;
+background: rgba(0,0,0,.45);
+backdrop-filter: blur(3px);
+border: 1px solid rgba(255,255,255,.08);
+}
+#title h1 {
+margin: 0 0 8px 0;
+font-size: 32px;
+letter-spacing: .5px;
+}
+#title p {
+margin: 6px 0;
+opacity: .9;
+}
+#title kbd {
+background: rgba(255,255,255,.12);
+border: 1px solid rgba(255,255,255,.25);
+border-bottom-width: 2px;
+padding: 2px 6px;
+border-radius: 6px;
+font-weight: 700;
+}
+#title .btn {
+margin-top: 14px;
+display: inline-block;
+padding: 10px 16px;
+background: #00d18f;
+color: #02130c;
+border-radius: 10px;
+font-weight: 800;
+cursor: pointer;
+}
+#pause {
+position: fixed;
+right: 10px; top: 10px;
+padding: 6px 10px;
+border-radius: 999px;
+background: rgba(255,255,255,.1);
+border: 1px solid rgba(255,255,255,.2);
+cursor: pointer;
+user-select: none;
+}
+#touch {
+position: fixed; inset: 0; pointer-events: none;
+}
+.tbtn {
+position: absolute;
+bottom: 18px;
+width: 80px; height: 80px;
+border-radius: 50%;
+background: rgba(255,255,255,.08);
+border: 2px solid rgba(255,255,255,.2);
+box-shadow: 0 4px 16px rgba(0,0,0,.4) inset;
+pointer-events: auto;
+touch-action: none;
+user-select: none;
+}
+.tbtn:active { background: rgba(255,255,255,.16); }
+#left { left: 18px; }
+#right { left: 120px; }
+#acc { right: 18px; }
+#brk { right: 120px; }
+.tlabel {
+position: absolute; inset: 0; display: grid; place-items: center;
+font-weight: 800; opacity: .9; text-shadow: 0 1px 2px rgba(0,0,0,.6);
+}
+#gameover {
+position: fixed; inset: 0; display: none; place-items: center;
+background: radial-gradient(ellipse at center, rgba(0,0,0,.6), rgba(0,0,0,.95));
+text-align: center;
+}
+#gameover .card {
+max-width: 640px;
+padding: 24px 20px;
+border-radius: 12px;
+background: rgba(0,0,0,.45);
+border: 1px solid rgba(255,255,255,.08);
+}
+a { color: #8cf; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="ui">
+<div class="pill">Dia: <span id="day">1</span></div>
+<div class="pill">Meta: <span id="goal">150</span></div>
+<div class="pill">Ultrapassados: <span id="passed">0</span></div>
+<div class="pill">Tempo: <span id="time">90.0</span>s</div>
+<div class="pill">Vel: <span id="spd">0</span> km/h</div>
+</div>
+
+<div id="title">
+<div class="card">
+<h1>Enduro JS (homenagem)</h1>
+<p>Ultrapasse a meta diária de carros para avançar de dia. Evite colisões, encare a noite e a neblina.</p>
+<p>Controles: <kbd>←</kbd> <kbd>→</kbd> direção • <kbd>↑</kbd> acelera • <kbd>↓</kbd> freia • <kbd>P</kbd> pausa • <kbd>M</kbd> som</p>
+<div class="btn" id="startBtn">Começar</div>
+<p style="opacity:.7;margin-top:10px">Jogo independente, sem afiliação à Activision. Apenas para fins educativos e de homenagem.</p>
+</div>
+</div>
+
+<div id="gameover">
+<div class="card">
+<h2 id="goTitle">Fim de jogo</h2>
+<p id="goStats"></p>
+<div class="btn" id="retryBtn">Jogar novamente</div>
+</div>
+</div>
+
+<div id="pause" title="Pausar/Retomar">⏯</div>
+
+<div id="touch">
+<div class="tbtn" id="left"><div class="tlabel">◀</div></div>
+<div class="tbtn" id="right"><div class="tlabel">▶</div></div>
+<div class="tbtn" id="acc"><div class="tlabel">↑</div></div>
+<div class="tbtn" id="brk"><div class="tlabel">↓</div></div>
+</div>
+
+<script>
+(() => {
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// UI refs
+const uiDay = document.getElementById('day');
+const uiGoal = document.getElementById('goal');
+const uiPassed = document.getElementById('passed');
+const uiTime = document.getElementById('time');
+const uiSpd = document.getElementById('spd');
+const startBtn = document.getElementById('startBtn');
+const title = document.getElementById('title');
+const pauseBtn = document.getElementById('pause');
+const gameOver = document.getElementById('gameover');
+const retryBtn = document.getElementById('retryBtn');
+const goTitle = document.getElementById('goTitle');
+const goStats = document.getElementById('goStats');
+
+// Touch controls
+const tLeft = document.getElementById('left');
+const tRight = document.getElementById('right');
+const tAcc = document.getElementById('acc');
+const tBrk = document.getElementById('brk');
+
+// Audio (mínimo, colisão)
+let audioEnabled = false;
+let ac, bump;
+let engineOsc, engineGain;
+let musicGain, musicOn = false, musicBPM = 122, musicStep = 0, musicAcc = 0, noiseBuf;
+
+function initAudio() {
+if (audioEnabled || typeof AudioContext === 'undefined') return;
+try {
+ac = new (window.AudioContext || window.webkitAudioContext)();
+bump = ac.createOscillator();
+const gain = ac.createGain();
+gain.gain.value = 0;
+bump.frequency.value = 90;
+bump.type = 'triangle';
+bump.connect(gain).connect(ac.destination);
+bump.start();
+// motor contínuo do jogador
+engineGain = ac.createGain();
+engineGain.gain.value = 0.0;
+engineOsc = ac.createOscillator();
+engineOsc.type = 'sawtooth';
+engineOsc.frequency.value = 60;
+engineOsc.connect(engineGain).connect(ac.destination);
+engineOsc.start();
+
+// música eletrônica de fundo (sequencer simples)
+musicGain = ac.createGain();
+musicGain.gain.value = 0.0;
+musicGain.connect(ac.destination);
+noiseBuf = makeNoiseBuffer();
+musicOn = true;
+musicStep = 0;
+musicAcc = 0;
+startMusic();
+
+// função para tocar bump curto
+playBump = () => {
+if (!ac) return;
+const g = ac.createGain();
+g.gain.value = 0.0;
+const o = ac.createOscillator();
+o.type = 'triangle';
+o.frequency.setValueAtTime(100, ac.currentTime);
+o.connect(g).connect(ac.destination);
+g.gain.setValueAtTime(0.0, ac.currentTime);
+g.gain.linearRampToValueAtTime(0.15, ac.currentTime + 0.01);
+g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.2);
+o.start();
+o.stop(ac.currentTime + 0.25);
+};
+audioEnabled = true;
+} catch(e) {}
+}
+let playBump = () => {};
+function updateEngineAudio(dt) {
+  if (!audioEnabled || !ac || !engineOsc || !engineGain) return;
+  const v = Math.max(0, Math.min(1, player.speed / MAX_SPEED));
+  const accelBoost = input.up ? 1 : 0;
+  const targetFreq = 60 + v * 260 + accelBoost * 60;
+  const targetGain = (started && !paused && !gameEnded) ? (0.03 + v * 0.07 + accelBoost * 0.03) : 0.0;
+  const now = ac.currentTime;
+  try {
+    engineOsc.frequency.setTargetAtTime(targetFreq, now, 0.06);
+  } catch(e) {
+    engineOsc.frequency.setValueAtTime(targetFreq, now);
+  }
+  try {
+    engineGain.gain.setTargetAtTime(targetGain, now, 0.08);
+  } catch(e) {
+    engineGain.gain.setValueAtTime(targetGain, now);
+  }
+}
+
+function startMusic() {
+  if (!musicGain || !ac) return;
+  const now = ac.currentTime;
+  try {
+    musicGain.gain.setTargetAtTime(0.12, now, 0.6);
+  } catch(e) {
+    musicGain.gain.setValueAtTime(0.12, now);
+  }
+}
+
+function makeNoiseBuffer() {
+  if (!ac) return null;
+  const buffer = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  return buffer;
+}
+function noteFreq(base, semi) { return base * Math.pow(2, semi/12); }
+
+function triggerKick(t) {
+  if (!ac || !musicGain) return;
+  const o = ac.createOscillator();
+  o.type = 'sine';
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.9, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  o.frequency.setValueAtTime(160, t);
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.22);
+  o.connect(g).connect(musicGain);
+  o.start(t);
+  o.stop(t + 0.25);
+}
+function triggerSnare(t) {
+  if (!ac || !musicGain || !noiseBuf) return;
+  const src = ac.createBufferSource();
+  src.buffer = noiseBuf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 1800;
+  bp.Q.value = 0.6;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.28, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  src.connect(bp).connect(g).connect(musicGain);
+  src.start(t);
+  src.stop(t + 0.2);
+}
+function triggerHat(t) {
+  if (!ac || !musicGain || !noiseBuf) return;
+  const src = ac.createBufferSource();
+  src.buffer = noiseBuf;
+  const hp = ac.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 6000;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.12, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  src.connect(hp).connect(g).connect(musicGain);
+  src.start(t);
+  src.stop(t + 0.06);
+}
+function triggerBass(t, semi) {
+  if (!ac || !musicGain || semi == null) return;
+  const o = ac.createOscillator();
+  o.type = 'sawtooth';
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(240, t);
+  lp.frequency.linearRampToValueAtTime(140, t + 0.25);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0, t);
+  g.gain.linearRampToValueAtTime(0.22, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+  o.frequency.value = noteFreq(110, semi); // base A2
+  o.connect(lp).connect(g).connect(musicGain);
+  o.start(t);
+  o.stop(t + 0.32);
+}
+
+function updateMusic(dt) {
+  if (!audioEnabled || !ac || !musicOn || !musicGain) return;
+  if (!started || paused || gameEnded) return;
+  const stepDur = 60 / musicBPM / 4; // 16th
+  musicAcc += dt;
+  while (musicAcc >= stepDur) {
+    musicAcc -= stepDur;
+    const step = musicStep;
+    musicStep = (musicStep + 1) & 15;
+    const t = ac.currentTime + 0.03;
+    if (step % 4 === 0) triggerKick(t);
+    if (step === 4 || step === 12) triggerSnare(t);
+    if (step % 2 === 0) triggerHat(t);
+    // sequência simples de baixo (inspirada, porém original)
+    const bassSeq = [0,null,null,null,7,null,null,null,0,null,null,null,5,null,null,null];
+    const semi = bassSeq[step];
+    if (semi !== null && semi !== undefined) triggerBass(t, semi);
+  }
+}
+
+// Canvas sizing
+let W = 0, H = 0, DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+function resize() {
+W = window.innerWidth;
+H = window.innerHeight;
+DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+canvas.width = Math.floor(W * DPR);
+canvas.height = Math.floor(H * DPR);
+canvas.style.width = W + 'px';
+canvas.style.height = H + 'px';
+ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+horizon = H * 0.38;
+roadBottomHalfWidth = Math.max(120, Math.min(220, W * 0.18));
+buildSkyline();
+}
+window.addEventListener('resize', resize, {passive:true});
+
+// Mundo e jogo
+let last = 0, running = false, paused = false, started = false, gameEnded = false;
+
+const MAX_SPEED = 280; // km/h (visual)
+const ACCEL = 140; // km/h/s
+const BRAKE = 280;
+const FRICTION = 50;
+const DAY_LENGTH = 90; // segundos por dia
+const PASS_GOAL_BASE = 150;
+
+const FAR_Z = 110; // distância "fictícia" do horizonte
+const NEAR_Z = 1.0;
+
+let horizon = 200;
+let roadBottomHalfWidth = 180;
+
+// Skyline de São Paulo
+let skylineShapes = [];
+let skylineFar = [];
+function buildSkyline() {
+skylineShapes = [];
+skylineFar = [];
+const baseY = horizon - 2;
+// camada distante (fundo)
+let x0 = -20;
+while (x0 < W + 20) {
+  const bw = 28 + Math.random() * 28;
+  const bh = 28 + Math.random() * 70;
+  skylineFar.push({ x: x0, w: bw, h: bh });
+  x0 += bw + (10 + Math.random() * 16);
+}
+// camada principal
+let x = -30;
+while (x < W + 30) {
+  const bw = 22 + Math.random() * 34;
+  const bh = 40 + Math.random() * 110;
+  const spire = Math.random() < 0.25 ? (10 + Math.random() * 34) : 0;
+  skylineShapes.push({ x, w: bw, h: bh, spire });
+  x += bw + (8 + Math.random() * 18);
+}
+}
+function drawSkyline() {
+const baseY = horizon - 2;
+ctx.save();
+// distante
+ctx.globalAlpha = 0.25;
+ctx.fillStyle = mixColor('#0a0f1e', '#5b6b8a', ambient * 0.9);
+for (const b of skylineFar) {
+  ctx.fillRect(b.x, baseY - (b.h + 18), b.w, b.h);
+}
+ctx.globalAlpha = 1;
+// principal
+ctx.fillStyle = mixColor('#0c1324', '#3a4b6b', ambient * 0.9);
+for (const b of skylineShapes) {
+  ctx.fillRect(b.x, baseY - b.h, b.w, b.h);
+  if (b.spire > 0) {
+    const sx = b.x + b.w * 0.5 - 1;
+    ctx.fillRect(sx, baseY - b.h - b.spire, 2, b.spire);
+  }
+}
+ctx.restore();
+}
+
+const input = { left:false, right:false, up:false, down:false };
+
+const player = {
+laneX: 0, // -1 .. 1 (posição lateral relativa na pista)
+speed: 0, // km/h
+flash: 0, // feedback de colisão
+};
+
+let curveOffset = 0; // deslocamento do centro da pista (px)
+let curveTarget = 0; // alvo de curva
+let stripeOffset = 0; // animação das faixas
+let day = 1;
+let passGoal = PASS_GOAL_BASE;
+let passed = 0;
+let score = 0;
+let dayTimer = DAY_LENGTH;
+let fogActive = false;
+let fogTimer = 0;
+let fogSchedule = []; // [ {tStart, tEnd}, ... ]
+let ambient = 1.0; // 0 noite, 1 dia
+let phase = 'day'; // 'day','dusk','night','dawn'
+
+const rivals = [];
+
+function resetFogSchedule() {
+fogSchedule = [];
+// Até 2 trechos de neblina por dia, 6–12s cada
+const segments = Math.floor(Math.random()*2)+1;
+for (let i=0;i<segments;i++){
+const start = Math.random() * (DAY_LENGTH - 18);
+const dur = 6 + Math.random() * 8;
+fogSchedule.push({tStart:start, tEnd:start+dur});
+}
+}
+
+function inFog(time) {
+for (const f of fogSchedule) {
+if (time >= f.tStart && time <= f.tEnd) return true;
+}
+return false;
+}
+
+function spawnRivals(n=4) {
+rivals.length = 0;
+for (let i=0;i<n;i++){
+rivals.push(makeRival(true));
+}
+}
+
+function makeRival(initial=false) {
+const minFactor = initial ? 0.9 : 0.85;   // sempre longe do jogador
+const maxFactor = 1.15;                    // pode nascer além do horizonte e entrar suave
+let z = FAR_Z * (minFactor + Math.random() * (maxFactor - minFactor));
+// faixa/lane de -0.9 a 0.9
+let lane = (Math.random()*1.8 - 0.9);
+// tenta evitar spawn muito próximo de outros (mesmo z + mesma faixa)
+for (let i=0; i<12; i++) {
+  if (isSpawnClear(z, lane)) break;
+  z += 6; // empurra mais para longe se estiver congestionado
+  lane = (Math.random()*1.8 - 0.9);
+}
+const color = randColor();
+return { z, lane, color, passed:false };
+}
+
+function randColor() {
+const palette = [
+'#ff3b3b', '#ffd03b', '#38e25f', '#3bb2ff', '#ff7ad1', '#fff',
+'#f78c1f', '#b78cff', '#7ef0ff'
+];
+return palette[Math.floor(Math.random()*palette.length)];
+}
+
+// evita que novos rivais nasçam muito próximos em z/faixa de outros já existentes
+function isSpawnClear(z, lane) {
+for (const r of rivals) {
+  if (Math.abs(r.z - z) < 12 && Math.abs(r.lane - lane) < 0.22) return false;
+}
+return true;
+}
+
+function resetGame() {
+player.laneX = 0;
+player.speed = 0;
+player.flash = 0;
+
+curveOffset = 0;
+curveTarget = 0;
+stripeOffset = 0;
+
+day = 1;
+passGoal = PASS_GOAL_BASE;
+passed = 0;
+score = 0;
+dayTimer = DAY_LENGTH;
+ambient = 1.0; phase = 'day';
+resetFogSchedule();
+fogActive = false;
+fogTimer = 0;
+
+spawnRivals(4);
+updateUI();
+}
+
+function nextDay() {
+day++;
+passed = 0;
+passGoal = Math.floor(PASS_GOAL_BASE * (1 + (day-1)*0.15));
+dayTimer = DAY_LENGTH;
+resetFogSchedule();
+phase = 'day';
+ambient = 1.0;
+}
+
+function updateUI() {
+uiDay.textContent = day;
+uiGoal.textContent = passGoal;
+uiPassed.textContent = passed;
+uiTime.textContent = dayTimer.toFixed(1);
+uiSpd.textContent = Math.round(player.speed);
+}
+
+// Entrada
+window.addEventListener('keydown', (e) => {
+if (e.repeat) return;
+if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = true;
+if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = true;
+if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = true;
+if (e.code === 'ArrowDown' || e.code === 'KeyS') input.down = true;
+if (e.code === 'KeyP') togglePause();
+if (e.code === 'KeyM') {
+if (!audioEnabled) initAudio();
+else { audioEnabled = false; ac && ac.close && ac.close(); ac = null; }
+}
+});
+window.addEventListener('keyup', (e) => {
+if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
+if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
+if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = false;
+if (e.code === 'ArrowDown' || e.code === 'KeyS') input.down = false;
+});
+
+function bindTouch(btn, on) {
+const handler = (v) => (ev) => { ev.preventDefault(); on(v); };
+btn.addEventListener('touchstart', handler(true), {passive:false});
+btn.addEventListener('touchend', handler(false), {passive:false});
+btn.addEventListener('pointerdown', handler(true));
+btn.addEventListener('pointerup', handler(false));
+btn.addEventListener('pointerleave', handler(false));
+}
+bindTouch(tLeft, v => input.left = v);
+bindTouch(tRight, v => input.right = v);
+bindTouch(tAcc, v => input.up = v);
+bindTouch(tBrk, v => input.down = v);
+
+startBtn.addEventListener('click', () => {
+started = true;
+title.style.display = 'none';
+initAudio(); // só inicializa se suportado
+run();
+});
+pauseBtn.addEventListener('click', () => togglePause());
+retryBtn.addEventListener('click', () => {
+gameOver.style.display = 'none';
+started = true; paused = false; gameEnded = false;
+resetGame();
+});
+
+function togglePause() {
+if (!started || gameEnded) return;
+paused = !paused;
+// silencia o motor ao pausar e ajusta música
+if (paused) {
+  if (engineGain && engineGain.gain) {
+    try { engineGain.gain.setTargetAtTime(0.0, ac ? ac.currentTime : 0, 0.05); }
+    catch(e) { engineGain.gain.setValueAtTime(0.0, ac ? ac.currentTime : 0); }
+  }
+  if (musicGain && musicGain.gain) {
+    try { musicGain.gain.setTargetAtTime(0.0, ac ? ac.currentTime : 0, 0.10); }
+    catch(e) { musicGain.gain.setValueAtTime(0.0, ac ? ac.currentTime : 0); }
+  }
+}
+if (!paused) {
+  // retoma música com fade-in
+  startMusic && startMusic();
+  last = performance.now();
+  run();
+}
+}
+
+function run(ts) {
+if (!started) return;
+running = true;
+last = last || performance.now();
+requestAnimationFrame(loop);
+}
+
+function loop(ts) {
+if (!running) return;
+if (paused) { requestAnimationFrame(loop); return; }
+if (!last) last = ts;
+let dt = (ts - last) / 1000;
+last = ts;
+dt = Math.min(dt, 1/30); // clamp
+
+update(dt);
+draw();
+
+if (!gameEnded) requestAnimationFrame(loop);
+}
+
+function update(dt) {
+// Atualiza tempo do dia
+dayTimer -= dt;
+if (dayTimer <= 0) {
+// Verifica objetivo
+if (passed >= passGoal) {
+nextDay();
+} else {
+endGame(false);
+return;
+}
+}
+
+// Ciclo dia/noite (simplificado por frações do cronômetro)
+const t = 1 - (dayTimer / DAY_LENGTH);
+// 0-0.15 amanhecer, 0.15-0.65 dia, 0.65-0.85 entardecer, 0.85-1 noite
+let amb = 1;
+if (t < 0.15) { phase = 'dawn'; amb = lerp(0.2, 1.0, t/0.15); }
+else if (t < 0.65) { phase = 'day'; amb = 1.0; }
+else if (t < 0.85) { phase = 'dusk'; amb = lerp(1.0, 0.25, (t-0.65)/0.2); }
+else { phase = 'night'; amb = 0.15; }
+ambient = amb;
+
+fogActive = inFog(DAY_LENGTH - dayTimer);
+
+// Curvas: ajusta alvo de curva suavemente
+// Segmentos de ~6s alternando esquerda/direita leves
+const curveSpeed = 20; // px/s
+const want = (Math.sin((DAY_LENGTH - dayTimer)*0.4 + day*1.3) * W * 0.15);
+curveTarget = want;
+curveOffset = approach(curveOffset, curveTarget, curveSpeed * dt);
+
+// Movimento e controles
+let accel = 0;
+if (input.up) accel += ACCEL;
+if (input.down) accel -= BRAKE;
+// Atrito
+const sign = player.speed >= 0 ? 1 : -1;
+if (!input.up && !input.down) {
+const dec = Math.min(FRICTION*dt, Math.abs(player.speed));
+player.speed -= dec * sign;
+} else {
+player.speed += accel * dt;
+}
+player.speed = clamp(player.speed, 0, MAX_SPEED);
+
+// Direção influenciada por velocidade
+const steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+const steerGain = 1.8 + (player.speed / MAX_SPEED) * 2.2;
+player.laneX += steer * steerGain * dt;
+player.laneX = clamp(player.laneX, -1.05, 1.05);
+
+// Penaliza sair da pista (grama)
+// largura de pista no "pé" da tela:
+const halfW = roadBottomHalfWidth;
+if (Math.abs(player.laneX) > 1.0) {
+player.speed -= 80 * dt;
+player.speed = Math.max(player.speed, 0);
+}
+
+// Animação das faixas proporcional à velocidade
+stripeOffset += (player.speed / MAX_SPEED) * 600 * dt;
+
+// Atualiza rivais (aproximação do pseudo-3D)
+const speedFactor = (player.speed / MAX_SPEED);
+const zSpeed = 40 + speedFactor * 160; // quão rápido z diminui (px/s "fictício")
+const visibleFar = fogActive ? FAR_Z * 0.55 : FAR_Z;
+for (const r of rivals) {
+r.z -= (zSpeed * dt);
+if (r.z < NEAR_Z) {
+// passou com sucesso (se não colidiu)
+if (!r.passed) {
+passed++;
+score++;
+r.passed = true;
+updateUI();
+if (passed >= passGoal && dayTimer > 0) {
+// Avança para o próximo dia imediatamente com pequena celebração visual (flash)
+dayTimer = 0.01;
+}
+}
+// Respawn
+const n = makeRival(false);
+r.z = n.z;
+r.lane = n.lane;
+r.color = n.color;
+r.passed = false;
+}
+}
+
+// Colisão com rivais próximos do jogador (z menor)
+// Fazemos checagem por bounding boxes projetadas
+const playerScreen = projectCar(NEAR_Z + 5, player.laneX);
+const pW = playerScreen.w;
+const pX = playerScreen.x;
+const pY = playerScreen.y;
+
+for (const r of rivals) {
+if (r.z > 25) continue; // longe suficiente
+const pr = projectCar(r.z, r.lane);
+if (pr.y < horizon || pr.y > H) continue;
+// Sobreposição lateral e vertical (aproximação)
+if (Math.abs(pr.x - pX) < (pr.w*0.45 + pW*0.45) && Math.abs(pr.y - pY) < (pr.h*0.6 + 20)) {
+// colisão
+collide();
+// empurra rival um pouco para frente para evitar múltiplas colisões no mesmo frame
+r.z += 6;
+}
+}
+
+// Decaimento do flash de dano
+player.flash = Math.max(0, player.flash - dt * 2);
+
+updateEngineAudio(dt);
+updateMusic(dt);
+updateUI();
+}
+
+function collide() {
+playBump();
+player.speed *= 0.35;
+player.flash = 1.0;
+}
+
+function endGame(won) {
+gameEnded = true;
+paused = true;
+// silencia o motor ao terminar o jogo
+if (engineGain && engineGain.gain) {
+  try {
+    engineGain.gain.setTargetAtTime(0.0, ac ? ac.currentTime : 0, 0.05);
+  } catch(e) {
+    engineGain.gain.setValueAtTime(0.0, ac ? ac.currentTime : 0);
+  }
+}
+ // abaixa música ao terminar o jogo
+if (musicGain && musicGain.gain) {
+  try {
+    musicGain.gain.setTargetAtTime(0.0, ac ? ac.currentTime : 0, 0.15);
+  } catch(e) {
+    musicGain.gain.setValueAtTime(0.0, ac ? ac.currentTime : 0);
+  }
+}
+goTitle.textContent = won ? 'Parabéns! Você venceu!' : 'Fim de jogo';
+goStats.innerHTML = `Dias alcançados: <b>${day}</b> • Ultrapassados no dia: <b>${passed}/${passGoal}</b> • Pontos: <b>${score}</b>`;
+gameOver.style.display = 'grid';
+}
+
+function projectCar(z, lane) {
+// converte z (1..FAR_Z) para y de tela
+const y = horizon + (1 - (z / FAR_Z)) * (H - horizon);
+const s = clamp((y - horizon) / (H - horizon), 0, 1); // escala 0..1
+const halfWidthAtY = lerp(roadBottomHalfWidth*0.1, roadBottomHalfWidth, s);
+const centerX = (W/2) + curveOffset * (0.2 + 0.8*s); // curva mais forte perto do observador
+const x = centerX + (lane * halfWidthAtY);
+const baseCarW = 50; // largura do carro do jogador na base
+const w = clamp(baseCarW * (0.25 + s*0.9), 8, baseCarW*1.1);
+const h = w * 1.4;
+return { x, y, w, h };
+}
+
+function draw() {
+// Céu com gradiente conforme "ambient"
+const skyTop = mixColor('#0b1c46', '#73c7ff', ambient);
+const skyBot = mixColor('#060a18', phase === 'dusk' ? '#ff9f40' : (phase === 'dawn' ? '#ffda7a' : '#3ea2ff'), ambient);
+const grd = ctx.createLinearGradient(0,0,0,horizon);
+grd.addColorStop(0, skyTop);
+grd.addColorStop(1, skyBot);
+ctx.fillStyle = grd;
+ctx.fillRect(0,0,W,H);
+
+// Sol/Lua estilizados (apenas um disco no horizonte)
+if (phase === 'dawn' || phase === 'dusk') {
+const t = (phase === 'dawn') ? (1 - (dayTimer/DAY_LENGTH)) / 0.15 : ((1 - (dayTimer/DAY_LENGTH)) - 0.65)/0.2;
+const s = clamp(t, 0, 1);
+ctx.globalAlpha = 0.7 * s;
+ctx.fillStyle = phase === 'dawn' ? '#ffd27b' : '#ff9850';
+const sunX = W*0.8;
+const sunY = horizon - 40 - s*30;
+ctx.beginPath();
+ctx.arc(sunX, sunY, 40, 0, Math.PI*2);
+ctx.fill();
+ctx.globalAlpha = 1;
+}
+
+drawSkyline();
+// Chão/grama
+const groundGrad = ctx.createLinearGradient(0,horizon,0,H);
+const grassDark = mixColor('#0b3b1b', '#1d5f2d', ambient);
+const grassLight = mixColor('#0a2a15', '#2c7a3b', ambient);
+groundGrad.addColorStop(0, grassLight);
+groundGrad.addColorStop(1, grassDark);
+ctx.fillStyle = groundGrad;
+ctx.fillRect(0, horizon, W, H-horizon);
+
+// Pista (trapézio)
+const roadTopHalf = 24;
+const roadBotHalf = roadBottomHalfWidth;
+const cxTop = (W/2) + curveOffset * 0.1;
+const cxBot = (W/2) + curveOffset;
+
+ctx.beginPath();
+ctx.moveTo(cxTop - roadTopHalf, horizon);
+ctx.lineTo(cxTop + roadTopHalf, horizon);
+ctx.lineTo(cxBot + roadBotHalf, H);
+ctx.lineTo(cxBot - roadBotHalf, H);
+ctx.closePath();
+// textura do asfalto com leve ruído
+const asphalt = ctx.createLinearGradient(0,horizon,0,H);
+asphalt.addColorStop(0, mixColor('#2a2a2a', '#555', ambient*0.2));
+asphalt.addColorStop(1, '#2a2a2a');
+ctx.fillStyle = asphalt;
+ctx.fill();
+
+// Bordas da pista
+ctx.lineWidth = 3;
+ctx.strokeStyle = '#dcdcdc';
+ctx.beginPath();
+ctx.moveTo(cxTop - roadTopHalf, horizon);
+ctx.lineTo(cxBot - roadBotHalf, H);
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(cxTop + roadTopHalf, horizon);
+ctx.lineTo(cxBot + roadBotHalf, H);
+ctx.stroke();
+
+// Faixa central pontilhada (dashes) – desenhar como trechos entre horizon..H
+const dashCount = 22;
+const dashSpacing = (H - horizon) / dashCount;
+const dashLen = dashSpacing * 0.45;
+for (let i=0;i<dashCount;i++){
+// animo offset
+const oy = (stripeOffset % dashSpacing);
+const y0 = horizon + i * dashSpacing + oy;
+if (y0 > horizon && y0 < H) {
+const s = clamp((y0 - horizon)/(H - horizon), 0, 1);
+const cx = (W/2) + curveOffset * s;
+const half = lerp(roadTopHalf, roadBotHalf, s);
+const w = Math.max(2, 4 * s + 2);
+// centro
+ctx.strokeStyle = mixColor('#eeeeee', '#ffffff', ambient);
+ctx.lineWidth = w;
+ctx.beginPath();
+ctx.moveTo(cx, y0);
+ctx.lineTo(cx, Math.min(H, y0 + dashLen));
+ctx.stroke();
+}
+}
+
+// Rivais
+const visibleFar = fogActive ? FAR_Z * 0.55 : FAR_Z;
+// Ordena por z desc (longe primeiro) para desenhar na ordem certa
+rivals.sort((a,b) => b.z - a.z);
+for (const r of rivals) {
+if (r.z > visibleFar) continue; // oculto pela neblina
+const pr = projectCar(r.z, r.lane);
+if (pr.y < horizon || pr.y > H) continue;
+
+// Carro rival (um retângulo com "para-choque" simples)
+drawCar(pr.x, pr.y, pr.w, pr.h, r.color, false);
+}
+
+// Carro do jogador
+const p = projectCar(NEAR_Z + 5, player.laneX);
+drawCar(p.x, p.y, p.w*1.05, p.h*1.05, '#ffffff', true);
+
+// Efeito de farol à noite
+if (ambient < 0.5) {
+ctx.save();
+ctx.globalCompositeOperation = 'lighter';
+const headGrad = ctx.createRadialGradient(p.x, p.y, 10, p.x, p.y-40, 220);
+headGrad.addColorStop(0, 'rgba(255,255,210,0.28)');
+headGrad.addColorStop(1, 'rgba(255,255,210,0)');
+ctx.fillStyle = headGrad;
+ctx.beginPath();
+ctx.ellipse(p.x, p.y-20, 160, 260, 0, 0, Math.PI*2);
+ctx.fill();
+ctx.restore();
+}
+
+// Neblina (overlay)
+if (fogActive) {
+const fog = ctx.createLinearGradient(0,horizon,0,H);
+fog.addColorStop(0, 'rgba(220,235,240,0.00)');
+fog.addColorStop(0.6, 'rgba(220,235,240,0.10)');
+fog.addColorStop(1, 'rgba(220,235,240,0.22)');
+ctx.fillStyle = fog;
+ctx.fillRect(0,horizon,W,H-horizon);
+}
+
+// Flash de colisão
+if (player.flash > 0) {
+ctx.fillStyle = `rgba(255,90,90,${0.25*player.flash})`;
+ctx.fillRect(0,0,W,H);
+}
+drawHUD();
+}
+
+function drawCar(x, y, w, h, color, isPlayer=false) {
+// Corpo
+ctx.save();
+ctx.translate(x, y);
+// sombra
+ctx.fillStyle = 'rgba(0,0,0,.25)';
+ctx.fillRect(-w*0.52, -h*0.05, w*1.04, h*0.18);
+// chassi
+ctx.fillStyle = color;
+roundRect(-w*0.5, -h*0.8, w, h*0.8, Math.min(10, w*0.12));
+ctx.fill();
+
+ // parabrisa/capô simples
+ctx.fillStyle = isPlayer ? mixColor('#003326','#005544',0.6) : '#1a1a1a';
+roundRect(-w*0.38, -h*0.72, w*0.76, h*0.36, 6);
+ctx.fill();
+
+ // Marca "Unesp" no carro do jogador
+if (isPlayer) {
+  ctx.save();
+  ctx.fillStyle = '#004aad';
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = Math.max(1, w * 0.035);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.max(10, Math.floor(w * 0.20))}px Arial`;
+  // posiciona na parte de baixo do carro (acima dos faróis)
+  const yLabel = -h * 0.18;
+  ctx.strokeText('Unesp', 0, yLabel);
+  ctx.fillText('Unesp', 0, yLabel);
+  ctx.restore();
+}
+
+// faróis traseiros dianteiros estilizados
+ctx.fillStyle = isPlayer ? '#e6ffcc' : '#ffcece';
+ctx.fillRect(-w*0.44, -h*0.15, w*0.16, h*0.08);
+ctx.fillRect(w*0.28, -h*0.15, w*0.16, h*0.08);
+
+// rodas
+ctx.fillStyle = '#111';
+ctx.fillRect(-w*0.55, -h*0.6, w*0.12, h*0.28);
+ctx.fillRect(w*0.43, -h*0.6, w*0.12, h*0.28);
+
+ctx.restore();
+}
+
+function drawHUD() {
+const panelW = Math.min(240, Math.max(200, W * 0.28));
+const panelH = 120;
+const x = 12;
+const y = H - panelH - 12;
+const pad = 10;
+
+ctx.save();
+// painel
+ctx.globalAlpha = 1;
+ctx.fillStyle = 'rgba(0,0,0,0.45)';
+roundRect(x, y, panelW, panelH, 10);
+ctx.fill();
+ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+ctx.stroke();
+
+// textos
+ctx.fillStyle = '#ffffff';
+ctx.font = 'bold 14px Arial';
+let yy = y + pad + 12;
+ctx.fillText(`Vel: ${Math.round(player.speed)} km/h`, x + pad, yy);
+yy += 18;
+ctx.fillText(`Pontos: ${score}`, x + pad, yy);
+yy += 18;
+ctx.fillText(`Dia: ${day} • Meta: ${passGoal}`, x + pad, yy);
+yy += 18;
+ctx.fillText(`Tempo: ${dayTimer.toFixed(1)}s`, x + pad, yy);
+
+// barras
+const barW = panelW - pad*2;
+// progresso meta
+const gBarY = y + panelH - pad - 22;
+ctx.fillStyle = 'rgba(255,255,255,0.2)';
+ctx.fillRect(x + pad, gBarY, barW, 6);
+const g = clamp(passed / Math.max(1, passGoal), 0, 1);
+ctx.fillStyle = '#ffd03b';
+ctx.fillRect(x + pad, gBarY, barW * g, 6);
+
+// velocidade
+const sBarY = gBarY + 10;
+ctx.fillStyle = 'rgba(255,255,255,0.2)';
+ctx.fillRect(x + pad, sBarY, barW, 8);
+const t = clamp(player.speed / MAX_SPEED, 0, 1);
+const grad = ctx.createLinearGradient(x + pad, 0, x + pad + barW, 0);
+grad.addColorStop(0, '#00d18f');
+grad.addColorStop(1, '#2affea');
+ctx.fillStyle = grad;
+ctx.fillRect(x + pad, sBarY, barW * t, 8);
+
+ctx.restore();
+}
+
+function roundRect(x,y,w,h,r) {
+ctx.beginPath();
+ctx.moveTo(x+r,y);
+ctx.arcTo(x+w,y,x+w,y+h,r);
+ctx.arcTo(x+w,y+h,x,y+h,r);
+ctx.arcTo(x,y+h,x,y,r);
+ctx.arcTo(x,y,x+w,y,r);
+ctx.closePath();
+}
+
+// Utils
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function lerp(a,b,t){ return a + (b-a)*t; }
+function approach(v, target, delta){ if (v < target) return Math.min(target, v+delta); else return Math.max(target, v-delta); }
+function mixColor(a,b,t){
+const ca = hexToRgb(a), cb = hexToRgb(b);
+const r = Math.round(lerp(ca.r, cb.r, t));
+const g = Math.round(lerp(ca.g, cb.g, t));
+const bl = Math.round(lerp(ca.b, cb.b, t));
+return `rgb(${r},${g},${bl})`;
+}
+function hexToRgb(hex){
+const h = hex.replace('#','');
+const n = parseInt(h,16);
+if (h.length === 6) return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+if (h.length === 3) {
+const r = parseInt(h[0]+h[0],16), g=parseInt(h[1]+h[1],16), b=parseInt(h[2]+h[2],16);
+return { r,g,b };
+}
+return { r:255,g:255,b:255 };
+}
+
+// Inicializa
+resize();
+resetGame();
+
+// Se o usuário não clicar em "Começar", nada roda (boa prática para áudio em mobile)
+})();
+</script>
+</body>
+</html>
