@@ -133,7 +133,7 @@ a { color: #8cf; }
 <div class="pill">Dia: <span id="day">1</span></div>
 <div class="pill">Meta: <span id="goal">150</span></div>
 <div class="pill">Ultrapassados: <span id="passed">0</span></div>
-<div class="pill">Tempo: <span id="time">90.0</span>s</div>
+<div class="pill">Tempo: <span id="time">150.0</span>s</div>
 <div class="pill">Vel: <span id="spd">0</span> km/h</div>
 </div>
 
@@ -386,7 +386,7 @@ const MAX_SPEED = 280; // km/h (visual)
 const ACCEL = 140; // km/h/s
 const BRAKE = 280;
 const FRICTION = 50;
-const DAY_LENGTH = 90; // segundos por dia
+const DAY_LENGTH = 150; // segundos por dia
 const PASS_GOAL_BASE = 150;
 
 const FAR_Z = 110; // distância "fictícia" do horizonte
@@ -424,12 +424,13 @@ function drawSkyline() {
 const baseY = horizon - 2;
 ctx.save();
 // distante
-ctx.globalAlpha = 0.25;
+const farA = 0.25 * (1 - fogLevel * 0.7);
+ctx.globalAlpha = Math.max(0, farA);
 ctx.fillStyle = mixColor('#0a0f1e', '#5b6b8a', ambient * 0.9);
 for (const b of skylineFar) {
   ctx.fillRect(b.x, baseY - (b.h + 18), b.w, b.h);
 }
-ctx.globalAlpha = 1;
+ctx.globalAlpha = Math.max(0.25, 1 - fogLevel * 0.4);
 // principal
 ctx.fillStyle = mixColor('#0c1324', '#3a4b6b', ambient * 0.9);
 for (const b of skylineShapes) {
@@ -461,6 +462,8 @@ let dayTimer = DAY_LENGTH;
 let fogActive = false;
 let fogTimer = 0;
 let fogSchedule = []; // [ {tStart, tEnd}, ... ]
+let fogLevel = 0; // 0..1 intensidade atual da neblina (com transição suave)
+let fogTarget = 0; // alvo baseado no agendamento
 let ambient = 1.0; // 0 noite, 1 dia
 let phase = 'day'; // 'day','dusk','night','dawn'
 
@@ -676,7 +679,13 @@ else if (t < 0.85) { phase = 'dusk'; amb = lerp(1.0, 0.25, (t-0.65)/0.2); }
 else { phase = 'night'; amb = 0.15; }
 ambient = amb;
 
-fogActive = inFog(DAY_LENGTH - dayTimer);
+{
+const nowT = DAY_LENGTH - dayTimer;
+fogTarget = inFog(nowT) ? 1 : 0;
+// transição suave da neblina
+fogLevel = approach(fogLevel, fogTarget, dt * 1.5);
+fogActive = fogLevel > 0.02;
+}
 
 // Curvas: ajusta alvo de curva suavemente
 // Segmentos de ~6s alternando esquerda/direita leves
@@ -719,7 +728,7 @@ stripeOffset += (player.speed / MAX_SPEED) * 600 * dt;
 // Atualiza rivais (aproximação do pseudo-3D)
 const speedFactor = (player.speed / MAX_SPEED);
 const zSpeed = 40 + speedFactor * 160; // quão rápido z diminui (px/s "fictício")
-const visibleFar = fogActive ? FAR_Z * 0.55 : FAR_Z;
+const visibleFar = FAR_Z * lerp(1.0, 0.35, fogLevel);
 for (const r of rivals) {
 r.z -= (zSpeed * dt);
 if (r.z < NEAR_Z) {
@@ -868,8 +877,10 @@ ctx.fillStyle = asphalt;
 ctx.fill();
 
 // Bordas da pista
+ctx.save();
 ctx.lineWidth = 3;
 ctx.strokeStyle = '#dcdcdc';
+ctx.globalAlpha = Math.max(0.35, 1 - fogLevel * 0.6);
 ctx.beginPath();
 ctx.moveTo(cxTop - roadTopHalf, horizon);
 ctx.lineTo(cxBot - roadBotHalf, H);
@@ -878,6 +889,7 @@ ctx.beginPath();
 ctx.moveTo(cxTop + roadTopHalf, horizon);
 ctx.lineTo(cxBot + roadBotHalf, H);
 ctx.stroke();
+ctx.restore();
 
 // Faixa central pontilhada (dashes) – desenhar como trechos entre horizon..H
 const dashCount = 22;
@@ -892,18 +904,22 @@ const s = clamp((y0 - horizon)/(H - horizon), 0, 1);
 const cx = (W/2) + curveOffset * s;
 const half = lerp(roadTopHalf, roadBotHalf, s);
 const w = Math.max(2, 4 * s + 2);
-// centro
+ // centro
 ctx.strokeStyle = mixColor('#eeeeee', '#ffffff', ambient);
 ctx.lineWidth = w;
+// atenua visibilidade da faixa com a distância e nível de neblina
+ctx.save();
+ctx.globalAlpha = Math.max(0.25, 1 - fogLevel * Math.pow(1 - s, 1.4) * 1.05);
 ctx.beginPath();
 ctx.moveTo(cx, y0);
 ctx.lineTo(cx, Math.min(H, y0 + dashLen));
 ctx.stroke();
+ctx.restore();
 }
 }
 
-// Rivais
-const visibleFar = fogActive ? FAR_Z * 0.55 : FAR_Z;
+ // Rivais
+const visibleFar = FAR_Z * lerp(1.0, 0.85, fogLevel);
 // Ordena por z desc (longe primeiro) para desenhar na ordem certa
 rivals.sort((a,b) => b.z - a.z);
 for (const r of rivals) {
@@ -911,8 +927,12 @@ if (r.z > visibleFar) continue; // oculto pela neblina
 const pr = projectCar(r.z, r.lane);
 if (pr.y < horizon || pr.y > H) continue;
 
-// Carro rival (um retângulo com "para-choque" simples)
+ // Carro rival (um retângulo com "para-choque" simples)
+ctx.save();
+const fogF = fogLevel * fogAmountAtZ(r.z);
+ctx.globalAlpha = Math.max(0.08, 1.0 - fogF * 0.92);
 drawCar(pr.x, pr.y, pr.w, pr.h, r.color, false);
+ctx.restore();
 }
 
 // Carro do jogador
@@ -933,12 +953,15 @@ ctx.fill();
 ctx.restore();
 }
 
-// Neblina (overlay)
+ // Neblina (overlay)
 if (fogActive) {
 const fog = ctx.createLinearGradient(0,horizon,0,H);
-fog.addColorStop(0, 'rgba(220,235,240,0.00)');
-fog.addColorStop(0.6, 'rgba(220,235,240,0.10)');
-fog.addColorStop(1, 'rgba(220,235,240,0.22)');
+const oTop = 0.42 * fogLevel;   // mais forte no topo (perto do horizonte)
+const oMid = 0.18 * fogLevel;
+const oBot = 0.04 * fogLevel;   // fraco no pé da pista
+fog.addColorStop(0, `rgba(220,235,240,${oTop.toFixed(3)})`);
+fog.addColorStop(0.5, `rgba(220,235,240,${oMid.toFixed(3)})`);
+fog.addColorStop(1, `rgba(220,235,240,${oBot.toFixed(3)})`);
 ctx.fillStyle = fog;
 ctx.fillRect(0,horizon,W,H-horizon);
 }
@@ -955,6 +978,25 @@ function drawCar(x, y, w, h, color, isPlayer=false) {
 // Corpo
 ctx.save();
 ctx.translate(x, y);
+// modo noturno: somente luzes acesas
+const night = (phase === 'night');
+if (night) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const lightColor = isPlayer ? 'rgba(255,255,210,0.85)' : 'rgba(255,80,80,0.9)';
+  ctx.fillStyle = lightColor;
+  // retângulos das luzes (frente do jogador / lanternas dos rivais)
+  ctx.fillRect(-w*0.44, -h*0.15, w*0.16, h*0.08);
+  ctx.fillRect(w*0.28, -h*0.15, w*0.16, h*0.08);
+  // brilho suave
+  ctx.fillStyle = isPlayer ? 'rgba(255,255,210,0.25)' : 'rgba(255,80,80,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.22, w*0.9, h*0.7, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+  ctx.restore();
+  return;
+}
 // sombra
 ctx.fillStyle = 'rgba(0,0,0,.25)';
 ctx.fillRect(-w*0.52, -h*0.05, w*1.04, h*0.18);
@@ -1079,6 +1121,12 @@ const r = parseInt(h[0]+h[0],16), g=parseInt(h[1]+h[1],16), b=parseInt(h[2]+h[2]
 return { r,g,b };
 }
 return { r:255,g:255,b:255 };
+}
+
+// Atenuação de neblina por distância (0 perto -> 1 longe)
+function fogAmountAtZ(z){
+const d = clamp((z - NEAR_Z) / (FAR_Z - NEAR_Z), 0, 1);
+return d * d; // curva quadrática para transição mais suave
 }
 
 // Inicializa
