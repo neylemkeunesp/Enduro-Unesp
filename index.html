@@ -939,8 +939,8 @@ ctx.restore();
 const p = projectCar(NEAR_Z + 5, player.laneX);
 drawCar(p.x, p.y, p.w*1.05, p.h*1.05, '#ffffff', true);
 
-// Efeito de farol à noite
-if (ambient < 0.5) {
+ // Efeito de farol ao entardecer (sem farol à noite)
+if (phase === 'dusk') {
 ctx.save();
 ctx.globalCompositeOperation = 'lighter';
 const headGrad = ctx.createRadialGradient(p.x, p.y, 10, p.x, p.y-40, 220);
@@ -983,15 +983,15 @@ const night = (phase === 'night');
 if (night) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  const lightColor = isPlayer ? 'rgba(255,255,210,0.85)' : 'rgba(255,80,80,0.9)';
+  const lightColor = 'rgba(255,80,80,0.95)'; // lanternas traseiras (vermelho)
   ctx.fillStyle = lightColor;
-  // retângulos das luzes (frente do jogador / lanternas dos rivais)
+  // apenas lanternas visíveis à noite (sem faróis)
   ctx.fillRect(-w*0.44, -h*0.15, w*0.16, h*0.08);
   ctx.fillRect(w*0.28, -h*0.15, w*0.16, h*0.08);
-  // brilho suave
-  ctx.fillStyle = isPlayer ? 'rgba(255,255,210,0.25)' : 'rgba(255,80,80,0.25)';
+  // brilho suave das lanternas
+  ctx.fillStyle = 'rgba(255,80,80,0.28)';
   ctx.beginPath();
-  ctx.ellipse(0, -h*0.22, w*0.9, h*0.7, 0, 0, Math.PI*2);
+  ctx.ellipse(0, -h*0.22, w*0.8, h*0.56, 0, 0, Math.PI*2);
   ctx.fill();
   ctx.restore();
   ctx.restore();
