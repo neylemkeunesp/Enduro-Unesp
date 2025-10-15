@@ -166,6 +166,9 @@ a { color: #8cf; }
 
 <script>
 (() => {
+const urlParams = new URLSearchParams(window.location.search);
+const debugPhase = urlParams.get('debugPhase');
+
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
@@ -391,6 +394,11 @@ const PASS_GOAL_BASE = 150;
 
 const FAR_Z = 110; // distância "fictícia" do horizonte
 const NEAR_Z = 1.0;
+const CURVE_LOOKAHEAD = 2.2; // segundos à frente usados para desenhar curva no horizonte
+const LANES = [-0.78, -0.26, 0.26, 0.78]; // posições relativas das faixas
+const LANE_COUNT = LANES.length;
+const LANE_CENTER = Math.floor(LANE_COUNT / 2);
+const LANE_CHANGE_RATE = 3.6; // quão rápido o jogador converge para o centro da faixa
 
 let horizon = 200;
 let roadBottomHalfWidth = 180;
@@ -443,16 +451,19 @@ for (const b of skylineShapes) {
 ctx.restore();
 }
 
-const input = { left:false, right:false, up:false, down:false };
+const input = { up:false, down:false };
 
 const player = {
-laneX: 0, // -1 .. 1 (posição lateral relativa na pista)
+laneIdx: LANE_CENTER, // índice da faixa atual
+laneX: LANES[LANE_CENTER], // posição lateral real
+laneTarget: LANES[LANE_CENTER],
 speed: 0, // km/h
 flash: 0, // feedback de colisão
 };
 
 let curveOffset = 0; // deslocamento do centro da pista (px)
 let curveTarget = 0; // alvo de curva
+let curvePreview = 0; // offset projetado no horizonte
 let stripeOffset = 0; // animação das faixas
 let day = 1;
 let passGoal = PASS_GOAL_BASE;
@@ -466,6 +477,7 @@ let fogLevel = 0; // 0..1 intensidade atual da neblina (com transição suave)
 let fogTarget = 0; // alvo baseado no agendamento
 let ambient = 1.0; // 0 noite, 1 dia
 let phase = 'day'; // 'day','dusk','night','dawn'
+let goalAchieved = false;
 
 const rivals = [];
 
@@ -487,7 +499,7 @@ if (time >= f.tStart && time <= f.tEnd) return true;
 return false;
 }
 
-function spawnRivals(n=4) {
+function spawnRivals(n=3) {
 rivals.length = 0;
 for (let i=0;i<n;i++){
 rivals.push(makeRival(true));
@@ -495,19 +507,18 @@ rivals.push(makeRival(true));
 }
 
 function makeRival(initial=false) {
-const minFactor = initial ? 0.9 : 0.85;   // sempre longe do jogador
-const maxFactor = 1.15;                    // pode nascer além do horizonte e entrar suave
+const minFactor = initial ? 1.2 : 1.05;   // sempre longe do jogador
+const maxFactor = initial ? 1.6 : 1.35;   // pode nascer bem além do horizonte
 let z = FAR_Z * (minFactor + Math.random() * (maxFactor - minFactor));
-// faixa/lane de -0.9 a 0.9
-let lane = (Math.random()*1.8 - 0.9);
+let laneIdx = Math.floor(Math.random() * LANE_COUNT);
 // tenta evitar spawn muito próximo de outros (mesmo z + mesma faixa)
 for (let i=0; i<12; i++) {
-  if (isSpawnClear(z, lane)) break;
+  if (isSpawnClear(z, laneIdx)) break;
   z += 6; // empurra mais para longe se estiver congestionado
-  lane = (Math.random()*1.8 - 0.9);
+  laneIdx = Math.floor(Math.random() * LANE_COUNT);
 }
 const color = randColor();
-return { z, lane, color, passed:false };
+return { z, laneIdx, color, passed:false };
 }
 
 function randColor() {
@@ -519,20 +530,23 @@ return palette[Math.floor(Math.random()*palette.length)];
 }
 
 // evita que novos rivais nasçam muito próximos em z/faixa de outros já existentes
-function isSpawnClear(z, lane) {
+function isSpawnClear(z, laneIdx) {
 for (const r of rivals) {
-  if (Math.abs(r.z - z) < 12 && Math.abs(r.lane - lane) < 0.22) return false;
+  if (Math.abs(r.z - z) < 12 && r.laneIdx === laneIdx) return false;
 }
 return true;
 }
 
 function resetGame() {
-player.laneX = 0;
+player.laneIdx = LANE_CENTER;
+player.laneTarget = LANES[player.laneIdx];
+player.laneX = player.laneTarget;
 player.speed = 0;
 player.flash = 0;
 
 curveOffset = 0;
 curveTarget = 0;
+curvePreview = 0;
 stripeOffset = 0;
 
 day = 1;
@@ -544,8 +558,9 @@ ambient = 1.0; phase = 'day';
 resetFogSchedule();
 fogActive = false;
 fogTimer = 0;
+goalAchieved = false;
 
-spawnRivals(4);
+spawnRivals();
 updateUI();
 }
 
@@ -557,6 +572,7 @@ dayTimer = DAY_LENGTH;
 resetFogSchedule();
 phase = 'day';
 ambient = 1.0;
+goalAchieved = false;
 }
 
 function updateUI() {
@@ -567,11 +583,17 @@ uiTime.textContent = dayTimer.toFixed(1);
 uiSpd.textContent = Math.round(player.speed);
 }
 
+function changePlayerLane(dir) {
+const nextIdx = clamp(player.laneIdx + dir, 0, LANE_COUNT - 1);
+player.laneIdx = nextIdx;
+player.laneTarget = LANES[nextIdx];
+}
+
 // Entrada
 window.addEventListener('keydown', (e) => {
+if (e.code === 'ArrowLeft' || e.code === 'KeyA') { e.preventDefault(); changePlayerLane(-1); return; }
+if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); changePlayerLane(1); return; }
 if (e.repeat) return;
-if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = true;
-if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = true;
 if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = true;
 if (e.code === 'ArrowDown' || e.code === 'KeyS') input.down = true;
 if (e.code === 'KeyP') togglePause();
@@ -581,8 +603,6 @@ else { audioEnabled = false; ac && ac.close && ac.close(); ac = null; }
 }
 });
 window.addEventListener('keyup', (e) => {
-if (e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
-if (e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
 if (e.code === 'ArrowUp' || e.code === 'KeyW') input.up = false;
 if (e.code === 'ArrowDown' || e.code === 'KeyS') input.down = false;
 });
@@ -595,8 +615,17 @@ btn.addEventListener('pointerdown', handler(true));
 btn.addEventListener('pointerup', handler(false));
 btn.addEventListener('pointerleave', handler(false));
 }
-bindTouch(tLeft, v => input.left = v);
-bindTouch(tRight, v => input.right = v);
+function bindLaneButton(btn, dir) {
+const handle = (ev) => { ev.preventDefault(); changePlayerLane(dir); };
+if (window.PointerEvent) {
+  btn.addEventListener('pointerdown', handle);
+} else {
+  btn.addEventListener('touchstart', handle, {passive:false});
+  btn.addEventListener('mousedown', handle);
+}
+}
+bindLaneButton(tLeft, -1);
+bindLaneButton(tRight, 1);
 bindTouch(tAcc, v => input.up = v);
 bindTouch(tBrk, v => input.down = v);
 
@@ -612,6 +641,13 @@ gameOver.style.display = 'none';
 started = true; paused = false; gameEnded = false;
 resetGame();
 });
+if (urlParams.has('autoStart')) {
+started = true;
+paused = false;
+gameEnded = false;
+title.style.display = 'none';
+run();
+}
 
 function togglePause() {
 if (!started || gameEnded) return;
@@ -661,7 +697,7 @@ function update(dt) {
 dayTimer -= dt;
 if (dayTimer <= 0) {
 // Verifica objetivo
-if (passed >= passGoal) {
+if (goalAchieved) {
 nextDay();
 } else {
 endGame(false);
@@ -677,6 +713,13 @@ if (t < 0.15) { phase = 'dawn'; amb = lerp(0.2, 1.0, t/0.15); }
 else if (t < 0.65) { phase = 'day'; amb = 1.0; }
 else if (t < 0.85) { phase = 'dusk'; amb = lerp(1.0, 0.25, (t-0.65)/0.2); }
 else { phase = 'night'; amb = 0.15; }
+if (debugPhase) {
+  const forced = debugPhase.toLowerCase();
+  if (forced === 'day' || forced === 'dusk' || forced === 'night' || forced === 'dawn') {
+    phase = forced;
+    amb = forced === 'night' ? 0.15 : (forced === 'dawn' ? 0.6 : (forced === 'dusk' ? 0.35 : 1.0));
+  }
+}
 ambient = amb;
 
 {
@@ -690,9 +733,14 @@ fogActive = fogLevel > 0.02;
 // Curvas: ajusta alvo de curva suavemente
 // Segmentos de ~6s alternando esquerda/direita leves
 const curveSpeed = 20; // px/s
-const want = (Math.sin((DAY_LENGTH - dayTimer)*0.4 + day*1.3) * W * 0.15);
+const trackTime = DAY_LENGTH - dayTimer;
+const basePhase = trackTime*0.4 + day*1.3;
+const want = Math.sin(basePhase) * W * 0.15;
 curveTarget = want;
 curveOffset = approach(curveOffset, curveTarget, curveSpeed * dt);
+const previewPhase = (trackTime + CURVE_LOOKAHEAD)*0.4 + day*1.3;
+const previewTarget = Math.sin(previewPhase) * W * 0.18;
+curvePreview = approach(curvePreview, previewTarget, curveSpeed * dt * 0.6);
 
 // Movimento e controles
 let accel = 0;
@@ -708,11 +756,9 @@ player.speed += accel * dt;
 }
 player.speed = clamp(player.speed, 0, MAX_SPEED);
 
-// Direção influenciada por velocidade
-const steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-const steerGain = 1.8 + (player.speed / MAX_SPEED) * 2.2;
-player.laneX += steer * steerGain * dt;
-player.laneX = clamp(player.laneX, -1.05, 1.05);
+// Direção por troca de faixa suave
+const laneSpeed = LANE_CHANGE_RATE + (player.speed / MAX_SPEED) * 2.8;
+player.laneX = approach(player.laneX, player.laneTarget, laneSpeed * dt);
 
 // Penaliza sair da pista (grama)
 // largura de pista no "pé" da tela:
@@ -738,15 +784,15 @@ passed++;
 score++;
 r.passed = true;
 updateUI();
-if (passed >= passGoal && dayTimer > 0) {
-// Avança para o próximo dia imediatamente com pequena celebração visual (flash)
-dayTimer = 0.01;
+if (!goalAchieved && passed >= passGoal) {
+goalAchieved = true;
+player.flash = Math.max(player.flash, 0.6);
 }
 }
 // Respawn
 const n = makeRival(false);
 r.z = n.z;
-r.lane = n.lane;
+r.laneIdx = n.laneIdx;
 r.color = n.color;
 r.passed = false;
 }
@@ -761,7 +807,7 @@ const pY = playerScreen.y;
 
 for (const r of rivals) {
 if (r.z > 25) continue; // longe suficiente
-const pr = projectCar(r.z, r.lane);
+const pr = projectCar(r.z, LANES[r.laneIdx]);
 if (pr.y < horizon || pr.y > H) continue;
 // Sobreposição lateral e vertical (aproximação)
 if (Math.abs(pr.x - pX) < (pr.w*0.45 + pW*0.45) && Math.abs(pr.y - pY) < (pr.h*0.6 + 20)) {
@@ -810,12 +856,19 @@ goStats.innerHTML = `Dias alcançados: <b>${day}</b> • Ultrapassados no dia: <
 gameOver.style.display = 'grid';
 }
 
+// mistura offset atual com uma prévia para que a curva apareça primeiro no horizonte
+function curveAt(s) {
+s = clamp(s, 0, 1);
+const blend = Math.pow(s, 1.4);
+return lerp(curvePreview, curveOffset, blend);
+}
+
 function projectCar(z, lane) {
 // converte z (1..FAR_Z) para y de tela
 const y = horizon + (1 - (z / FAR_Z)) * (H - horizon);
 const s = clamp((y - horizon) / (H - horizon), 0, 1); // escala 0..1
 const halfWidthAtY = lerp(roadBottomHalfWidth*0.1, roadBottomHalfWidth, s);
-const centerX = (W/2) + curveOffset * (0.2 + 0.8*s); // curva mais forte perto do observador
+const centerX = (W/2) + curveAt(s);
 const x = centerX + (lane * halfWidthAtY);
 const baseCarW = 50; // largura do carro do jogador na base
 const w = clamp(baseCarW * (0.25 + s*0.9), 8, baseCarW*1.1);
@@ -857,17 +910,29 @@ groundGrad.addColorStop(1, grassDark);
 ctx.fillStyle = groundGrad;
 ctx.fillRect(0, horizon, W, H-horizon);
 
-// Pista (trapézio)
+// Pista com múltiplos segmentos para desenhar curvas
 const roadTopHalf = 24;
 const roadBotHalf = roadBottomHalfWidth;
-const cxTop = (W/2) + curveOffset * 0.1;
-const cxBot = (W/2) + curveOffset;
+const roadSegments = 40;
+const roadStrip = [];
+for (let i=0; i<=roadSegments; i++) {
+  const s = i / roadSegments;
+  const y = horizon + (H - horizon) * s;
+  const half = lerp(roadTopHalf, roadBotHalf, s);
+  const center = (W/2) + curveAt(s);
+  roadStrip.push({ s, y, half, center });
+}
 
 ctx.beginPath();
-ctx.moveTo(cxTop - roadTopHalf, horizon);
-ctx.lineTo(cxTop + roadTopHalf, horizon);
-ctx.lineTo(cxBot + roadBotHalf, H);
-ctx.lineTo(cxBot - roadBotHalf, H);
+ctx.moveTo(roadStrip[0].center - roadStrip[0].half, roadStrip[0].y);
+for (let i=1; i<roadStrip.length; i++) {
+  const p = roadStrip[i];
+  ctx.lineTo(p.center - p.half, p.y);
+}
+for (let i=roadStrip.length-1; i>=0; i--) {
+  const p = roadStrip[i];
+  ctx.lineTo(p.center + p.half, p.y);
+}
 ctx.closePath();
 // textura do asfalto com leve ruído
 const asphalt = ctx.createLinearGradient(0,horizon,0,H);
@@ -882,12 +947,18 @@ ctx.lineWidth = 3;
 ctx.strokeStyle = '#dcdcdc';
 ctx.globalAlpha = Math.max(0.35, 1 - fogLevel * 0.6);
 ctx.beginPath();
-ctx.moveTo(cxTop - roadTopHalf, horizon);
-ctx.lineTo(cxBot - roadBotHalf, H);
+ctx.moveTo(roadStrip[0].center - roadStrip[0].half, roadStrip[0].y);
+for (let i=1; i<roadStrip.length; i++) {
+  const p = roadStrip[i];
+  ctx.lineTo(p.center - p.half, p.y);
+}
 ctx.stroke();
 ctx.beginPath();
-ctx.moveTo(cxTop + roadTopHalf, horizon);
-ctx.lineTo(cxBot + roadBotHalf, H);
+ctx.moveTo(roadStrip[0].center + roadStrip[0].half, roadStrip[0].y);
+for (let i=1; i<roadStrip.length; i++) {
+  const p = roadStrip[i];
+  ctx.lineTo(p.center + p.half, p.y);
+}
 ctx.stroke();
 ctx.restore();
 
@@ -896,26 +967,29 @@ const dashCount = 22;
 const dashSpacing = (H - horizon) / dashCount;
 const dashLen = dashSpacing * 0.45;
 for (let i=0;i<dashCount;i++){
-// animo offset
-const oy = (stripeOffset % dashSpacing);
-const y0 = horizon + i * dashSpacing + oy;
-if (y0 > horizon && y0 < H) {
-const s = clamp((y0 - horizon)/(H - horizon), 0, 1);
-const cx = (W/2) + curveOffset * s;
-const half = lerp(roadTopHalf, roadBotHalf, s);
-const w = Math.max(2, 4 * s + 2);
- // centro
-ctx.strokeStyle = mixColor('#eeeeee', '#ffffff', ambient);
-ctx.lineWidth = w;
-// atenua visibilidade da faixa com a distância e nível de neblina
-ctx.save();
-ctx.globalAlpha = Math.max(0.25, 1 - fogLevel * Math.pow(1 - s, 1.4) * 1.05);
-ctx.beginPath();
-ctx.moveTo(cx, y0);
-ctx.lineTo(cx, Math.min(H, y0 + dashLen));
-ctx.stroke();
-ctx.restore();
-}
+  // animo offset
+  const oy = (stripeOffset % dashSpacing);
+  const y0 = horizon + i * dashSpacing + oy;
+  if (y0 > horizon && y0 < H) {
+    const s = clamp((y0 - horizon)/(H - horizon), 0, 1);
+    const yEnd = Math.min(H, y0 + dashLen);
+    const s1 = clamp((yEnd - horizon)/(H - horizon), 0, 1);
+    const midS = clamp(((y0 + yEnd) * 0.5 - horizon)/(H - horizon), 0, 1);
+    const cx0 = (W/2) + curveAt(s);
+    const cx1 = (W/2) + curveAt(s1);
+    const w = Math.max(2, 4 * midS + 2);
+    // centro
+    ctx.strokeStyle = mixColor('#eeeeee', '#ffffff', ambient);
+    ctx.lineWidth = w;
+    // atenua visibilidade da faixa com a distância e nível de neblina
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.25, 1 - fogLevel * Math.pow(1 - midS, 1.4) * 1.05);
+    ctx.beginPath();
+    ctx.moveTo(cx0, y0);
+    ctx.lineTo(cx1, yEnd);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
  // Rivais
@@ -924,7 +998,7 @@ const visibleFar = FAR_Z * lerp(1.0, 0.85, fogLevel);
 rivals.sort((a,b) => b.z - a.z);
 for (const r of rivals) {
 if (r.z > visibleFar) continue; // oculto pela neblina
-const pr = projectCar(r.z, r.lane);
+const pr = projectCar(r.z, LANES[r.laneIdx]);
 if (pr.y < horizon || pr.y > H) continue;
 
  // Carro rival (um retângulo com "para-choque" simples)
@@ -983,15 +1057,13 @@ const night = (phase === 'night');
 if (night) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  const lightColor = 'rgba(255,80,80,0.95)'; // lanternas traseiras (vermelho)
-  ctx.fillStyle = lightColor;
-  // apenas lanternas visíveis à noite (sem faróis)
+  const tail = isPlayer ? 'rgba(255,120,120,0.95)' : 'rgba(255,80,80,0.95)';
+  ctx.fillStyle = tail;
   ctx.fillRect(-w*0.44, -h*0.15, w*0.16, h*0.08);
   ctx.fillRect(w*0.28, -h*0.15, w*0.16, h*0.08);
-  // brilho suave das lanternas
-  ctx.fillStyle = 'rgba(255,80,80,0.28)';
+  ctx.fillStyle = isPlayer ? 'rgba(255,120,120,0.35)' : 'rgba(255,80,80,0.28)';
   ctx.beginPath();
-  ctx.ellipse(0, -h*0.22, w*0.8, h*0.56, 0, 0, Math.PI*2);
+  ctx.ellipse(0, -h*0.18, w*0.9, h*0.54, 0, 0, Math.PI*2);
   ctx.fill();
   ctx.restore();
   ctx.restore();
